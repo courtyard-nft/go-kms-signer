@@ -27,7 +27,6 @@ It allows you to sign Ethereum transactions using keys stored securely in GCP KM
 ## Installation
 
 ```bash
-# Replace courtyard-nft with the actual path where this module will live
 go get github.com/courtyard-nft/go-kms-signer
 ```
 
