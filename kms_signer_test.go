@@ -48,19 +48,19 @@ func newMockKMSSigner(t *testing.T) *KMSSigner {
 }
 
 func (m *mockKMSClient) GetPublicKey(ctx context.Context, req *kmspb.GetPublicKeyRequest) (*kmspb.PublicKey, error) {
-	
+
 	x509EncodedPub, err := x509.MarshalPKIXPublicKey(&m.privateKey.PublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal public key to X.509: %w", err)
 	}
-	
+
 	pemBytes := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
 		Bytes: x509EncodedPub,
 	})
-	
+
 	return &kmspb.PublicKey{
-		Pem: string(pemBytes),
+		Pem:       string(pemBytes),
 		Algorithm: kmspb.CryptoKeyVersion_EC_SIGN_SECP256K1_SHA256,
 	}, nil
 }
