@@ -26,7 +26,6 @@ jobs:
         uses: google-github-actions/auth@v1
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
   
       - name: Set up gcloud (for KMS client lib to auth)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
