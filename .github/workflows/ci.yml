@@ -50,6 +50,9 @@ jobs:
         run: go build -v ./...
 
       - name: Run unit tests
+        env:
+          GOOGLE_CLOUD_PROJECT: courtyard-frontend
+          TEST_KMS_KEY_NAME: ${{ secrets.KMS_KEY_NAME }}
         run: go test -v -timeout 120s ./... -short
 
       # Only run integration tests for pushes to main
