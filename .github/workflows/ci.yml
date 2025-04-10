@@ -20,15 +20,16 @@ jobs:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
 
+      # Only run Google Cloud authentication and integration tests for pushes to main
       - name: Authenticate to Google Cloud
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: google-github-actions/auth@v1
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
   
       - name: Set up gcloud (for KMS client lib to auth)
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: google-github-actions/setup-gcloud@v1
         with:
           project_id: courtyard-frontend
@@ -52,7 +53,9 @@ jobs:
       - name: Run unit tests
         run: go test -v -timeout 120s ./... -short
 
+      # Only run integration tests for pushes to main
       - name: Run integration tests
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GOOGLE_CLOUD_PROJECT: courtyard-frontend
           TEST_KMS_KEY_NAME: ${{ secrets.KMS_KEY_NAME }}
