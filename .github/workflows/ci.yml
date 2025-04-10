@@ -21,12 +21,14 @@ jobs:
           fetch-depth: 0
 
       - name: Authenticate to Google Cloud
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: google-github-actions/auth@v1
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
   
       - name: Set up gcloud (for KMS client lib to auth)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: google-github-actions/setup-gcloud@v1
         with:
           project_id: courtyard-frontend
