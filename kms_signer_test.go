@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/x509"
 	"encoding/asn1"
 	"encoding/hex"
 	"encoding/pem"
@@ -48,14 +47,11 @@ func newMockKMSClient(t *testing.T) *KMSSigner {
 }
 
 func (m *mockKMSClient) GetPublicKey(ctx context.Context, req *kmspb.GetPublicKeyRequest) (*kmspb.PublicKey, error) {
-	x509EncodedPub, err := x509.MarshalPKIXPublicKey(&m.privateKey.PublicKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal public key to X.509: %w", err)
-	}
-
+	pubKeyBytes := crypto.FromECDSAPub(&m.privateKey.PublicKey)
+	
 	pemBytes := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
-		Bytes: x509EncodedPub,
+		Bytes: pubKeyBytes,
 	})
 
 	return &kmspb.PublicKey{
