@@ -40,23 +40,48 @@ func newMockKMSClient(t *testing.T) *KMSSigner {
 		keyName: "test-key",
 	}
 	
-	err = signer.fetchAndCachePublicKey(context.Background())
-	require.NoError(t, err, "Failed to fetch and cache public key")
+	pubKey := &privateKey.PublicKey
+	signer.publicKey = pubKey
+	signer.address = crypto.PubkeyToAddress(*pubKey)
 	
 	return signer
 }
 
 func (m *mockKMSClient) GetPublicKey(ctx context.Context, req *kmspb.GetPublicKeyRequest) (*kmspb.PublicKey, error) {
+	spki := struct {
+		Algorithm struct {
+			Algorithm  asn1.ObjectIdentifier
+			Parameters asn1.ObjectIdentifier
+		}
+		PublicKey asn1.BitString
+	}{
+		Algorithm: struct {
+			Algorithm  asn1.ObjectIdentifier
+			Parameters asn1.ObjectIdentifier
+		}{
+			Algorithm: asn1.ObjectIdentifier{1, 2, 840, 10045, 2, 1},
+			Parameters: asn1.ObjectIdentifier{1, 3, 132, 0, 10},
+		},
+	}
+
 	pubKeyBytes := crypto.FromECDSAPub(&m.privateKey.PublicKey)
-	
+	spki.PublicKey = asn1.BitString{
+		Bytes:     pubKeyBytes,
+		BitLength: 8 * len(pubKeyBytes),
+	}
+
+	der, err := asn1.Marshal(spki)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal SPKI: %w", err)
+	}
+
 	pemBytes := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
-		Bytes: pubKeyBytes,
+		Bytes: der,
 	})
 
 	return &kmspb.PublicKey{
-		Pem:       string(pemBytes),
-		Algorithm: kmspb.CryptoKeyVersion_EC_SIGN_SECP256K1_SHA256,
+		Pem: string(pemBytes),
 	}, nil
 }
 
