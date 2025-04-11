@@ -35,10 +35,15 @@ func newMockKMSClient(t *testing.T) *KMSSigner {
 		privateKey: privateKey,
 	}
 
-	return &KMSSigner{
+	signer := &KMSSigner{
 		client:  mock,
 		keyName: "test-key",
 	}
+	
+	err = signer.fetchAndCachePublicKey(context.Background())
+	require.NoError(t, err, "Failed to fetch and cache public key")
+	
+	return signer
 }
 
 func (m *mockKMSClient) GetPublicKey(ctx context.Context, req *kmspb.GetPublicKeyRequest) (*kmspb.PublicKey, error) {
