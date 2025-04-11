@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"sync"
 	"time"
 
 	kms "cloud.google.com/go/kms/apiv1"
@@ -19,6 +20,36 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
+
+var (
+	globalSigner *KMSSigner
+	signerMu     sync.RWMutex
+)
+
+func InitWithKMSSigner(ctx context.Context, config KMSSignerConfig) error {
+	signerMu.Lock()
+	defer signerMu.Unlock()
+
+	signer, err := NewKMSSigner(ctx, config)
+	if err != nil {
+		return err
+	}
+
+	globalSigner = signer
+	return nil
+}
+
+func Sign(message []byte) ([]byte, error) {
+	signerMu.RLock()
+	defer signerMu.RUnlock()
+
+	if globalSigner == nil {
+		return nil, fmt.Errorf("global signer not initialized")
+	}
+
+	hash := crypto.Keccak256(message)
+	return globalSigner.Sign(hash)
+}
 
 // KMSClient defines the interface for KMS operations required by KMSSigner.
 // This allows for mocking the KMS client in tests.
@@ -159,7 +190,11 @@ func (s *KMSSigner) Close() error {
 // Sign signs the provided message hash using the KMS key.
 // It retries on transient errors using exponential backoff.
 // The resulting signature is in the Ethereum [R || S || V] format, where V is 0x1b or 0x1c.
-func (s *KMSSigner) Sign(ctx context.Context, message []byte) ([]byte, error) {
+func (s *KMSSigner) Sign(message []byte) ([]byte, error) {
+	return s.SignWithContext(context.Background(), message)
+}
+
+func (s *KMSSigner) SignWithContext(ctx context.Context, message []byte) ([]byte, error) {
 	if s.publicKey == nil {
 		// Attempt to fetch the key if it wasn't cached initially (e.g., network issue)
 		if err := s.fetchAndCachePublicKey(ctx); err != nil {
@@ -228,6 +263,14 @@ func (s *KMSSigner) signAttempt(ctx context.Context, message []byte) ([]byte, er
 	}
 
 	return ethSig, nil
+}
+
+func (s *KMSSigner) GetWalletAddress(ctx context.Context) (string, error) {
+	return s.Address().Hex(), nil
+}
+
+func (s *KMSSigner) derToEthereumSignature(derSig, hash []byte, pubKey *ecdsa.PublicKey) ([]byte, error) {
+	return derToEthereumSignature(derSig, hash, pubKey)
 }
 
 // derToEthereumSignature converts an ASN.1 DER encoded ECDSA signature to the Ethereum
@@ -323,7 +366,7 @@ func (s *KMSSigner) SignerFn(chainID *big.Int) bind.SignerFn {
 
 		// Sign the hash using KMS
 		// Use context.Background or pass one down if needed for cancellation/deadlines
-		signature, err := s.Sign(context.Background(), txHash[:])
+		signature, err := s.Sign(txHash[:])
 		if err != nil {
 			return nil, fmt.Errorf("failed to sign transaction hash with KMS: %w", err)
 		}
