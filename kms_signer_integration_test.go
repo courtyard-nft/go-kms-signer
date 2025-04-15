@@ -27,10 +27,6 @@ func getTestKeyConfig(t *testing.T) TestKeyConfig {
 }
 
 func TestKMSSignerIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
 	config := getTestKeyConfig(t)
 	ctx := context.Background()
 
@@ -78,10 +74,6 @@ func TestKMSSignerIntegration(t *testing.T) {
 }
 
 func TestKMSSignerIntegrationRetry(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
 	config := getTestKeyConfig(t)
 	ctx := context.Background()
 
