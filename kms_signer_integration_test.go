@@ -30,9 +30,7 @@ func TestKMSSignerIntegration(t *testing.T) {
 	config := getTestKeyConfig(t)
 	ctx := context.Background()
 
-	signer, err := NewKMSSigner(ctx, KMSSignerConfig{
-		KeyName: config.KeyName,
-	})
+	signer, err := NewKMSSigner(ctx, KMSSignerConfig(config))
 	require.NoError(t, err)
 	defer signer.Close()
 
@@ -77,9 +75,7 @@ func TestKMSSignerIntegrationRetry(t *testing.T) {
 	config := getTestKeyConfig(t)
 	ctx := context.Background()
 
-	signer, err := NewKMSSigner(ctx, KMSSignerConfig{
-		KeyName: config.KeyName,
-	})
+	signer, err := NewKMSSigner(ctx, KMSSignerConfig(config))
 	require.NoError(t, err)
 	defer signer.Close()
 
