@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/x509"
 	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
@@ -106,23 +105,32 @@ func (s *KMSSigner) fetchAndCachePublicKey(ctx context.Context) error {
 		return fmt.Errorf("failed to get public key from KMS: %w", err)
 	}
 
-	// Parse the PEM-encoded public key
 	block, _ := pem.Decode([]byte(pubKeyResp.Pem))
 	if block == nil {
 		return fmt.Errorf("failed to decode PEM block containing public key")
 	}
-	if block.Type != "PUBLIC KEY" {
-		return fmt.Errorf("invalid PEM block type: %s", block.Type)
+
+	// Parse the ASN.1 structure
+	var spki struct {
+		Algorithm struct {
+			Algorithm  asn1.ObjectIdentifier
+			Parameters asn1.ObjectIdentifier
+		}
+		PublicKey asn1.BitString
+	}
+	if _, err := asn1.Unmarshal(block.Bytes, &spki); err != nil {
+		return fmt.Errorf("failed to parse ASN.1 structure: %w", err)
 	}
 
-	// Parse the public key using standard library functions
-	genericPubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return fmt.Errorf("failed to parse PKIX public key: %w", err)
+	// Convert the public key bytes to ECDSA public key
+	x, y := elliptic.Unmarshal(crypto.S256(), spki.PublicKey.Bytes)
+	if x == nil {
+		return fmt.Errorf("failed to unmarshal public key")
 	}
-	parsedPubKey, ok := genericPubKey.(*ecdsa.PublicKey)
-	if !ok {
-		return fmt.Errorf("key is not an ECDSA public key")
+	parsedPubKey := &ecdsa.PublicKey{
+		Curve: crypto.S256(),
+		X:     x,
+		Y:     y,
 	}
 
 	// Validate the curve
@@ -235,71 +243,63 @@ func (s *KMSSigner) signAttempt(ctx context.Context, message []byte) ([]byte, er
 // `hash` is the original message hash that was signed.
 // `pubKey` is the public key corresponding to the KMS key used for signing.
 func derToEthereumSignature(derSig, hash []byte, pubKey *ecdsa.PublicKey) ([]byte, error) {
+	// DER signature structure
 	var sig struct {
 		R, S *big.Int
 	}
+
+	// Decode DER signature
 	if _, err := asn1.Unmarshal(derSig, &sig); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal DER signature: %w", err)
 	}
 
-	// Ensure S is in the lower half of the curve order (prevents malleability)
-	// As per EIP-2: https://github.com/ethereum/EIPs/blob/master/EIPS/eip-2.md
-	curveOrder := crypto.S256().Params().N
-	if sig.S.Cmp(new(big.Int).Div(curveOrder, big.NewInt(2))) > 0 {
-		sig.S.Sub(curveOrder, sig.S)
-	}
+	// Create the signature
+	signature := make([]byte, 65)
 
+	// Fill R and S values
 	rBytes := sig.R.Bytes()
 	sBytes := sig.S.Bytes()
 
-	// Ethereum signature format [R (32 bytes) || S (32 bytes) || V (1 byte)]
-	signature := make([]byte, 65)
-
-	// Left-pad R and S to 32 bytes
+	// Ensure R and S are exactly 32 bytes
 	copy(signature[32-len(rBytes):32], rBytes)
 	copy(signature[64-len(sBytes):64], sBytes)
 
-	// Calculate recovery ID (V)
-	// V = 27 + recovery_id (where recovery_id is 0 or 1)
-	// Reference: go-ethereum/crypto/signature_nocgo.go's Sign function logic
-
-	// We need to try both possible recovery IDs (0 and 1) and see which one
-	// recovers the correct public key.
-	var recoveredPubKey *ecdsa.PublicKey
-
-	// Try V = 27 (recovery ID = 0)
-	signature[64] = 0 // Use 0 for Ecrecover's V parameter
-	recPubBytes, err := crypto.Ecrecover(hash, signature)
-	// Need to handle errors from Ecrecover carefully
-	if err == nil {
-		// Unmarshal the recovered public key bytes (format: 0x04 || X || Y)
-		x, y := elliptic.Unmarshal(crypto.S256(), recPubBytes)
-		if x != nil { // Check if unmarshal was successful
-			recoveredPubKey = &ecdsa.PublicKey{Curve: crypto.S256(), X: x, Y: y}
-			if recoveredPubKey.X.Cmp(pubKey.X) == 0 && recoveredPubKey.Y.Cmp(pubKey.Y) == 0 {
-				signature[64] = 27 // Set Ethereum V
-				return signature, nil
-			}
-		}
+	// Try v = 0
+	signature[64] = 0x0
+	if verifySignature(pubKey, hash, signature) {
+		signature[64] = 0x1b // Ethereum signature requires 27 added to v
+		return signature, nil
 	}
 
-	// Try V = 28 (recovery ID = 1)
-	signature[64] = 1 // Use 1 for Ecrecover's V parameter
-	recPubBytes, err = crypto.Ecrecover(hash, signature)
-	if err == nil {
-		// Unmarshal the recovered public key bytes
-		x, y := elliptic.Unmarshal(crypto.S256(), recPubBytes)
-		if x != nil { // Check if unmarshal was successful
-			recoveredPubKey = &ecdsa.PublicKey{Curve: crypto.S256(), X: x, Y: y}
-			if recoveredPubKey.X.Cmp(pubKey.X) == 0 && recoveredPubKey.Y.Cmp(pubKey.Y) == 0 {
-				signature[64] = 28 // Set Ethereum V
-				return signature, nil
-			}
-		}
+	// Try v = 1
+	signature[64] = 0x1
+	if verifySignature(pubKey, hash, signature) {
+		signature[64] = 0x1c // Ethereum signature requires 27 added to v
+		return signature, nil
 	}
 
-	// If neither recovery ID worked, something is wrong.
-	return nil, fmt.Errorf("failed to determine correct recovery ID (V) for signature")
+	return nil, fmt.Errorf("failed to determine correct recovery ID")
+}
+
+// verifySignature checks if a signature is valid for a given public key and hash
+func verifySignature(pubKey *ecdsa.PublicKey, hash, sig []byte) bool {
+	// Try to recover the public key
+	recoveredPub, err := crypto.Ecrecover(hash, sig)
+	if err != nil {
+		return false
+	}
+
+	// Convert recovered public key using crypto/ecdh
+	x, y := new(big.Int), new(big.Int)
+	x.SetBytes(recoveredPub[1:33])
+	y.SetBytes(recoveredPub[33:])
+	recoveredKey := &ecdsa.PublicKey{
+		X: x,
+		Y: y,
+	}
+
+	// Compare public keys
+	return recoveredKey.X.Cmp(pubKey.X) == 0 && recoveredKey.Y.Cmp(pubKey.Y) == 0
 }
 
 // SignerFn returns a `bind.SignerFn` compatible function for use with go-ethereum contract bindings.

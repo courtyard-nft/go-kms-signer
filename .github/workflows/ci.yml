@@ -1,0 +1,60 @@
+name: Go
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+  
+      - name: Set up gcloud (for KMS client lib to auth)
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: courtyard-frontend
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.24.1
+
+      - name: Lint Go files
+        run: |
+          find . -name '*.go' | xargs gofmt -d -s -w
+          if ! git diff-index --quiet HEAD --; then
+              echo "Code style issues found. Please run 'go fmt ./...' locally and commit changes."
+              exit 1
+          fi
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Run unit tests
+        env:
+          GOOGLE_CLOUD_PROJECT: courtyard-frontend
+          TEST_KMS_KEY_NAME: ${{ secrets.KMS_KEY_NAME }}
+        run: go test -v -timeout 120s ./... -short
+
+      - name: Run integration tests
+        env:
+          GOOGLE_CLOUD_PROJECT: courtyard-frontend
+          TEST_KMS_KEY_NAME: ${{ secrets.KMS_KEY_NAME }}
+        run: go test -v -timeout 300s ./... -run "TestKMSSigner(Integration|Retry)"
