@@ -303,12 +303,9 @@ func verifySignature(pubKey *ecdsa.PublicKey, hash, sig []byte) bool {
 }
 
 // SignerFn returns a `bind.SignerFn` compatible function for use with go-ethereum contract bindings.
-// It captures the chain ID to produce EIP-155 compatible signatures.
+// It captures the chain ID to produce EIP-155 and EIP-1559 compatible signatures.
 func (s *KMSSigner) SignerFn(chainID *big.Int) bind.SignerFn {
 	if chainID == nil || chainID.Sign() <= 0 {
-		// Use a default or handle error? EIP-155 requires a positive chainID.
-		// For now, let's return an error or panic, as non-EIP155 is insecure.
-		// Panic might be better to catch configuration errors early.
 		panic("SignerFn requires a valid positive chainID for EIP-155")
 	}
 
@@ -317,12 +314,20 @@ func (s *KMSSigner) SignerFn(chainID *big.Int) bind.SignerFn {
 			return nil, fmt.Errorf("attempted to sign transaction with incorrect address: expected %s, got %s", s.Address().Hex(), addr.Hex())
 		}
 
-		// EIP-155 signer requires the chain ID
-		eip155Signer := types.NewEIP155Signer(chainID)
-		txHash := eip155Signer.Hash(tx)
+		// Use the appropriate signer based on transaction type
+		var signer types.Signer
+		switch tx.Type() {
+		case types.DynamicFeeTxType:
+			signer = types.NewLondonSigner(chainID)
+		case types.AccessListTxType:
+			signer = types.NewEIP2930Signer(chainID)
+		default:
+			signer = types.NewEIP155Signer(chainID)
+		}
+
+		txHash := signer.Hash(tx)
 
 		// Sign the hash using KMS
-		// Use context.Background or pass one down if needed for cancellation/deadlines
 		signature, err := s.Sign(context.Background(), txHash[:])
 		if err != nil {
 			return nil, fmt.Errorf("failed to sign transaction hash with KMS: %w", err)
@@ -348,7 +353,7 @@ func (s *KMSSigner) SignerFn(chainID *big.Int) bind.SignerFn {
 		}
 
 		// Add the signature to the transaction
-		signedTx, err := tx.WithSignature(eip155Signer, signature)
+		signedTx, err := tx.WithSignature(signer, signature)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add KMS signature to transaction: %w", err)
 		}
