@@ -18,9 +18,8 @@ require (
 	cloud.google.com/go/longrunning v0.6.5 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/StackExchange/wmi v1.2.1 // indirect
-	github.com/bits-and-blooms/bitset v1.17.0 // indirect
-	github.com/consensys/bavard v0.1.22 // indirect
-	github.com/consensys/gnark-crypto v0.14.0 // indirect
+	github.com/bits-and-blooms/bitset v1.20.0 // indirect
+	github.com/consensys/gnark-crypto v0.18.1 // indirect
 	github.com/crate-crypto/go-ipa v0.0.0-20240724233137-53bbb0ceb27a // indirect
 	github.com/crate-crypto/go-kzg-4844 v1.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -39,7 +38,6 @@ require (
 	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
-	github.com/mmcloughlin/addchain v0.4.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect
 	github.com/supranational/blst v0.3.14 // indirect
@@ -65,5 +63,4 @@ require (
 	google.golang.org/grpc v1.71.0 // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	rsc.io/tmplfunc v0.0.3 // indirect
 )
