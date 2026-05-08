@@ -1,5 +1,7 @@
 # Go KMS Signer for Ethereum
 
+<!-- Devin environment verification: 2026-05-08. -->
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/courtyard-nft/go-kms-signer.svg)](https://pkg.go.dev/github.com/courtyard-nft/go-kms-signer)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
