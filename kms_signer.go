@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"sync"
 	"time"
 
 	kms "cloud.google.com/go/kms/apiv1"
@@ -51,8 +52,12 @@ func (k *kmsClientWrapper) Close() error {
 // It handles fetching the public key, signing hashes, and converting signatures
 // to the format expected by Ethereum.
 type KMSSigner struct {
-	client    KMSClient
-	keyName   string
+	client  KMSClient
+	keyName string
+
+	// mu guards publicKey and address, which can be refreshed concurrently
+	// with signing calls (e.g. multiple SignerFn users sharing one signer).
+	mu        sync.RWMutex
 	publicKey *ecdsa.PublicKey // Cache the public key
 	address   common.Address   // Cache the derived address
 }
@@ -138,6 +143,8 @@ func (s *KMSSigner) fetchAndCachePublicKey(ctx context.Context) error {
 		return fmt.Errorf("public key curve is not secp256k1")
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.publicKey = parsedPubKey
 	s.address = crypto.PubkeyToAddress(*s.publicKey)
 
@@ -146,11 +153,15 @@ func (s *KMSSigner) fetchAndCachePublicKey(ctx context.Context) error {
 
 // Address returns the Ethereum address associated with the KMS key.
 func (s *KMSSigner) Address() common.Address {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.address
 }
 
 // PublicKey returns the ECDSA public key associated with the KMS key.
 func (s *KMSSigner) PublicKey() *ecdsa.PublicKey {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.publicKey
 }
 
@@ -168,12 +179,19 @@ func (s *KMSSigner) Close() error {
 // It retries on transient errors using exponential backoff.
 // The resulting signature is in the Ethereum [R || S || V] format, where V is 0x1b or 0x1c.
 func (s *KMSSigner) Sign(ctx context.Context, message []byte) ([]byte, error) {
-	if s.publicKey == nil {
+	// Ensure a public key is cached; refresh it concurrently with signing if needed.
+	s.mu.RLock()
+	cached := s.publicKey != nil
+	s.mu.RUnlock()
+	if !cached {
 		// Attempt to fetch the key if it wasn't cached initially (e.g., network issue)
 		if err := s.fetchAndCachePublicKey(ctx); err != nil {
 			return nil, fmt.Errorf("public key not available and failed to fetch: %w", err)
 		}
-		if s.publicKey == nil {
+		s.mu.RLock()
+		cached = s.publicKey != nil
+		s.mu.RUnlock()
+		if !cached {
 			return nil, fmt.Errorf("public key not available") // Should not happen if fetch succeeds
 		}
 	}
@@ -199,16 +217,21 @@ func (s *KMSSigner) Sign(ctx context.Context, message []byte) ([]byte, error) {
 
 // signAttempt performs a single signing attempt using KMS.
 func (s *KMSSigner) signAttempt(ctx context.Context, message []byte) ([]byte, error) {
-	// Note: KMS expects the raw message digest. Ethereum typically uses Keccak256.
-	// The caller of Sign should hash the message appropriately before passing it.
-	// Here we assume `message` is the 32-byte hash.
+	// Read the cached public key under the lock so a concurrent
+	// fetchAndCachePublicKey refresh cannot race with this signing attempt.
+	s.mu.RLock()
+	pubKey := s.publicKey
+	s.mu.RUnlock()
+	if pubKey == nil {
+		return nil, fmt.Errorf("public key not available")
+	}
+
+	// KMS expects the raw message digest. For ECDSA_SIGN_SECP256K1_SHA256 keys
+	// the digest must be exactly 32 bytes; callers of Sign are expected to pass
+	// the Keccak256 transaction hash. Accepting other lengths here would make
+	// KMS reject every attempt and burn the full 30-second retry budget.
 	if len(message) != 32 {
-		// Warn or error if the message length isn't the expected hash size
-		// return nil, fmt.Errorf("invalid message hash length: expected 32 bytes, got %d", len(message))
-		// For flexibility, we allow different lengths, but KMS requires a Digest.
-		// If the input is not a hash, KMS might hash it depending on the key type,
-		// which could lead to incorrect signatures for Ethereum.
-		// We proceed assuming KMS handles it or the key expects raw data.
+		return nil, fmt.Errorf("invalid message hash length: expected 32 bytes, got %d", len(message))
 	}
 
 	req := &kmspb.AsymmetricSignRequest{
@@ -230,7 +253,7 @@ func (s *KMSSigner) signAttempt(ctx context.Context, message []byte) ([]byte, er
 	}
 
 	// Convert the DER signature to Ethereum format [R || S || V]
-	ethSig, err := derToEthereumSignature(resp.Signature, message, s.publicKey)
+	ethSig, err := derToEthereumSignature(resp.Signature, message, pubKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert DER signature to Ethereum format: %w", err)
 	}
@@ -260,7 +283,12 @@ func derToEthereumSignature(derSig, hash []byte, pubKey *ecdsa.PublicKey) ([]byt
 	rBytes := sig.R.Bytes()
 	sBytes := sig.S.Bytes()
 
-	// Ensure R and S are exactly 32 bytes
+	// Reject R or S values that do not fit in 32 bytes; writing larger values
+	// below would produce a negative slice index and panic the caller.
+	if len(rBytes) == 0 || len(rBytes) > 32 || len(sBytes) == 0 || len(sBytes) > 32 {
+		return nil, fmt.Errorf("DER signature component out of range: R %d bytes, S %d bytes", len(rBytes), len(sBytes))
+	}
+
 	copy(signature[32-len(rBytes):32], rBytes)
 	copy(signature[64-len(sBytes):64], sBytes)
 
